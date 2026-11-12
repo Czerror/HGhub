@@ -43,6 +43,8 @@ pub fn run() {
             api::api_get_proxy,
             api::api_set_proxy,
             api::api_category,
+            api::api_site_categories,
+            api::api_site_sorts,
             api::api_rank,
             api::api_search,
             api::cache_clear,

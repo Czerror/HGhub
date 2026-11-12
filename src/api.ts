@@ -45,8 +45,12 @@ export const api = {
   me: () => call<User>("api_me"),
 
   feed: (page = 1, size = 20) => call<Paged<VideoCard>>("api_feed", { page, size }),
-  category: (cate: string, page = 1, size = 20) =>
-    call<Paged<VideoCard>>("api_category", { cate, page, size }),
+  category: (cate: string, page = 1, size = 20, sort?: string) =>
+    call<Paged<VideoCard>>("api_category", { cate, page, size, sort: sort ?? null }),
+  siteCategories: () =>
+    call<{ items: { id: number; name: string; route: string }[] }>("api_site_categories"),
+  siteSorts: () =>
+    call<{ items: { id: number; name: string; route: string }[] }>("api_site_sorts"),
   rank: (kind: "hot" | "recommend" | "potential") =>
     call<{ type: string; items: RankItem[] }>("api_rank", { kind }),
   search: (q: string, page = 1, size = 20) =>

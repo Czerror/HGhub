@@ -139,12 +139,25 @@ pub async fn api_category(
     cate: String,
     page: u32,
     size: u32,
+    sort: Option<String>,
 ) -> Result<Value, String> {
+    let sort = sort.unwrap_or_default();
+    let suffix = if sort.is_empty() { String::new() } else { format!("&sort={sort}") };
     state
-        .get(&format!(
-            "/api/videos/category/{cate}?page={page}&size={size}"
-        ))
+        .get(&format!("/api/videos/category/{cate}?page={page}&size={size}{suffix}"))
         .await
+}
+
+/// 站点分类表（名称/路由以远端为准）
+#[tauri::command]
+pub async fn api_site_categories(state: State<'_, Api>) -> Result<Value, String> {
+    state.get("/api/site/categories/video").await
+}
+
+/// 站点排序表（最新/最热等）
+#[tauri::command]
+pub async fn api_site_sorts(state: State<'_, Api>) -> Result<Value, String> {
+    state.get("/api/site/sorts/video").await
 }
 
 #[tauri::command]

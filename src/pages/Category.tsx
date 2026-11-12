@@ -13,9 +13,14 @@ export const CHANNELS = [
   { cate: "ai-mogai", name: "AI魔改", desc: "魔改名场面 · 脑洞大开" },
 ] as const;
 
+/* 远端只给名称与路由，副标题按路由取本地文案 */
+const DESC: Record<string, string> = Object.fromEntries(CHANNELS.map((c) => [c.cate, c.desc]));
+type Channel = { cate: string; name: string; desc: string };
+
 /* ================= 分类总览 ================= */
 export default function Category({ wide }: { wide: boolean }) {
   const { push } = useStore();
+  const [channels, setChannels] = useState<Channel[]>(CHANNELS.map((c) => ({ ...c })));
   const [rows, setRows] = useState<Record<string, VideoCard[]>>({});
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,8 +28,16 @@ export default function Category({ wide }: { wide: boolean }) {
   useEffect(() => {
     let alive = true;
     (async () => {
+      /* 分类表以站点为准：上游下线/改名时这里自动跟随 */
+      let list: Channel[] = CHANNELS.map((c) => ({ ...c }));
+      try {
+        const remote = (await api.siteCategories())?.items || [];
+        if (remote.length) {
+          list = remote.map((i) => ({ cate: i.route, name: i.name, desc: DESC[i.route] ?? "" }));
+        }
+      } catch { /* 保留内置频道 */ }
       const entries = await Promise.all(
-        CHANNELS.map(async (c) => {
+        list.map(async (c) => {
           try {
             const res = await api.category(c.cate, 1, 8);
             return [c.cate, res?.items || []] as const;
@@ -36,6 +49,7 @@ export default function Category({ wide }: { wide: boolean }) {
       let p: Post[] = [];
       try { p = (await api.posts(1, 8))?.items || []; } catch { p = []; }
       if (!alive) return;
+      setChannels(list);
       setRows(Object.fromEntries(entries));
       setPosts(p);
       setLoading(false);
@@ -48,7 +62,7 @@ export default function Category({ wide }: { wide: boolean }) {
       <div className="shrink-0 px-4 pb-1" style={{ paddingTop: "calc(var(--sat, 0px) + 14px)" }}>
         <div className="flex items-end gap-2.5">
           <span className="text-[24px] font-bold text-on leading-none">分类</span>
-          <span className="text-[11px] text-mut pb-0.5">{CHANNELS.length + 1} 个频道 · 每周持续上新</span>
+          <span className="text-[11px] text-mut pb-0.5">{channels.length + 1} 个频道 · 每周持续上新</span>
         </div>
       </div>
 
@@ -64,7 +78,7 @@ export default function Category({ wide }: { wide: boolean }) {
           <IChevR size={16} className="text-mut" />
         </button>
 
-        {CHANNELS.map((c, ci) => {
+        {channels.map((c, ci) => {
           const list = rows[c.cate] || [];
           return (
             <section key={c.cate} className="mb-5 a-rise" style={{ animationDelay: `${Math.min(ci * 50, 300)}ms` }}>
@@ -132,12 +146,14 @@ export default function Category({ wide }: { wide: boolean }) {
 /* ================= 频道详情页 ================= */
 export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: string; onBack: () => void; wide: boolean }) {
   const { push } = useStore();
-  const [sort, setSort] = useState<"最新" | "最热" | "高分">("最新");
+  const [sorts, setSorts] = useState<{ name: string; route: string }[]>([]);
+  const [sortRoute, setSortRoute] = useState("");
   const [items, setItems] = useState<VideoCard[]>([]);
   const [page, setPage] = useState(0);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [offline, setOffline] = useState<string | null>(null);
   const busy = useRef(false);
   const sentinel = useRef<HTMLDivElement>(null);
 
@@ -147,23 +163,44 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
     setLoading(true);
     try {
       const next = page + 1;
-      const res = await api.category(cate, next, 20);
+      const res = await api.category(cate, next, 20, sortRoute || undefined);
       setItems((prev) => {
-        const seen = new Set(prev.map((x) => x.id));
-        return [...prev, ...(res?.items || []).filter((x) => !seen.has(x.id))];
+        const base = next === 1 ? [] : prev;
+        const seen = new Set(base.map((x) => x.id));
+        return [...base, ...(res?.items || []).filter((x: VideoCard) => !seen.has(x.id))];
       });
       setPage(next);
       setPages(res?.pagination?.pages || next);
       setErr(null);
     } catch (e) {
-      setErr((e as Error).message || "加载失败");
+      const msg = (e as Error).message || "加载失败";
+      /* 上游清空分类时返回「内容已下线」，按空列表处理而不是报错 */
+      if (/已下线|不存在/.test(msg)) {
+        setOffline(msg);
+        setItems([]);
+        setPage(1);
+        setPages(1);
+        setErr(null);
+      } else {
+        setErr(msg);
+      }
     } finally {
       busy.current = false;
       setLoading(false);
     }
   };
 
-  useEffect(() => { loadMore(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    api.siteSorts()
+      .then((r) => setSorts((r?.items || []).filter((s) => s.route !== "watchings")))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setItems([]); setPage(0); setPages(1); setErr(null); setOffline(null);
+    loadMore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortRoute]);
   useEffect(() => {
     const el = sentinel.current;
     if (!el) return;
@@ -172,12 +209,6 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
     return () => io.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pages]);
-
-  const sorted = [...items].sort((a, b) => {
-    if (sort === "最热") return (b.hot || 0) - (a.hot || 0);
-    if (sort === "高分") return (b.score || 0) - (a.score || 0);
-    return b.id - a.id;
-  });
 
   return (
     <div className="absolute inset-0 bg-bg flex flex-col">
@@ -190,17 +221,19 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
             <div className="text-[10.5px] text-mut">共 {items.length} 部 · 已加载 {page}/{Math.max(pages, 1)} 页</div>
           </div>
         </div>
-        <div className="px-4 pb-3 flex gap-2">
-          {(["最新", "最热", "高分"] as const).map((s) => (
-            <button key={s} onClick={() => setSort(s)}
-              className={`px-4 h-8 rounded-(--r-ctl) text-[12px] font-semibold pressable ${sort === s ? "tonal text-on-sec" : "bg-s3 text-mut"}`}
-              style={sort === s ? { background: "var(--p-sec)", color: "var(--p-primary)" } : undefined}>{s}</button>
+        <div className="px-4 pb-3 flex gap-2 overflow-x-auto">
+          {[{ name: "默认", route: "" }, ...sorts].map((s) => (
+            <button key={s.route || "default"} onClick={() => setSortRoute(s.route)}
+              className={`px-4 h-8 shrink-0 rounded-(--r-ctl) text-[12px] font-semibold pressable ${sortRoute === s.route ? "tonal text-on-sec" : "bg-s3 text-mut"}`}
+              style={sortRoute === s.route ? { background: "var(--p-sec)", color: "var(--p-primary)" } : undefined}>{s.name}</button>
           ))}
         </div>
       </div>
       <div className="flex-1 scroll-y px-4 pt-3 pb-8">
-        {sorted.length ? (
-          <Masonry videos={sorted} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: sorted.map((x) => x.id), index: sorted.findIndex((x) => x.id === v.id), title: name })} />
+        {items.length ? (
+          <Masonry videos={items} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: name })} />
+        ) : offline ? (
+          <Empty icon={<IGrid size={26} />} title="该分类暂无内容" sub="上游已下线该分类，恢复后会自动出现" />
         ) : err ? (
           <Empty icon={<IGrid size={26} />} title="加载失败" sub={err} action="重试" onAction={loadMore} />
         ) : (
@@ -208,7 +241,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
         )}
         <div ref={sentinel} className="h-10" />
         {loading && <div className="flex justify-center py-3"><div className="w-6 h-6 spinner" /></div>}
-        {!loading && page >= pages && sorted.length > 0 && (
+        {!loading && page >= pages && items.length > 0 && (
           <div className="text-center text-[10.5px] text-dim py-3">— 已经到底啦 —</div>
         )}
       </div>
