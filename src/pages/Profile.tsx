@@ -1,9 +1,77 @@
 import { useEffect, useState } from "react";
 import { api, cover, fmt, platform } from "../api";
-import type { Detail, User } from "../types";
+import type { Detail, PlaylistItem, User } from "../types";
 import { useStore } from "../store";
 import { Avatar, Empty, Img, Modal, Toggle } from "../components/ui";
 import { IBroom, IChevR, IClock, IHeart, IInfo, ILink, ILogout, IMoon, IStar, ISun, IUser, IUserF } from "../icons";
+
+const toCard = (it: PlaylistItem) => ({
+  id: Number(it.video_id ?? it.id),
+  cover: it.cover || "",
+  title: it.title || "",
+});
+
+/* 网络代理：站点在部分网络下直连不通，应用内设置后立即生效 */
+function ProxySection() {
+  const { toast } = useStore();
+  const [current, setCurrent] = useState("");
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { api.proxy().then(setCurrent).catch(() => {}); }, []);
+
+  const openModal = () => { setValue(current); setErr(""); setOpen(true); };
+
+  const save = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.setProxy(value.trim());
+      setCurrent(value.trim());
+      setOpen(false);
+      toast(value.trim() ? "代理已生效" : "已切换为直连", "ok");
+    } catch (e) {
+      setErr((e as Error).message || "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center gap-3 px-3.5 py-3">
+        <span className="w-8 h-8 rounded-full bg-s3 flex items-center justify-center text-primary"><ILink size={16} /></span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[12.5px] text-on">网络代理</div>
+          <div className="text-[10.5px] text-mut truncate">{current || "跟随系统代理"}</div>
+        </div>
+        <button onClick={openModal} className="px-3 h-7 rounded-(--r-ctl) bg-s3 text-[11.5px] text-on/80 pressable">设置</button>
+      </div>
+
+      <Modal open={open} onClose={() => setOpen(false)} width={360}>
+        <div className="p-5">
+          <div className="text-[14.5px] font-bold text-on">网络代理</div>
+          <p className="text-[11.5px] text-mut leading-relaxed mt-2">
+            站点在部分网络下直连不通，填本地代理后立即生效。留空表示跟随系统代理。
+          </p>
+          <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="http://127.0.0.1:7890"
+            className="mt-3 w-full h-10 px-3.5 rounded-(--r-sm) bg-s4 text-[13px] text-on placeholder-dim outline-none" />
+          {err && <div className="text-[11.5px] text-danger mt-2">{err}</div>}
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => { setValue(""); setErr(""); }}
+              className="flex-1 h-9 rounded-(--r-ctl) bg-s4 text-[12.5px] text-on/80 pressable">直连</button>
+            <button onClick={save} disabled={busy}
+              className="flex-1 h-9 rounded-(--r-ctl) bg-primary text-[12.5px] font-semibold text-on-primary pressable disabled:opacity-60">
+              {busy ? "保存中…" : "保存并生效"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
 
 export default function Profile({ wide }: { wide: boolean }) {
   const { user, setUser, loginOpen, setLoginOpen, logout, theme, setTheme, history, favs, clearHistory, clearLocal, push, toast } = useStore();
@@ -14,26 +82,60 @@ export default function Profile({ wide }: { wide: boolean }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<"fav" | "history">("fav");
-  const [cards, setCards] = useState<Detail[]>([]);
+  const [cards, setCards] = useState<{ id: number; cover: string; title: string }[]>([]);
   const [about, setAbout] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [moreBusy, setMoreBusy] = useState(false);
 
   const ids = tab === "fav" ? favs : history;
 
   useEffect(() => {
     let alive = true;
-    if (!ids.length) { setCards([]); return; }
     setLoading(true);
-    Promise.allSettled(ids.slice(0, 12).map((id) => api.video(id)))
-      .then((rs) => {
+    setHasMore(false);
+    setPage(1);
+    const done = (list: { id: number; cover: string; title: string }[]) => {
+      if (alive) { setCards(list); setLoading(false); }
+    };
+    const loadLocal = () => {
+      if (!ids.length) return done([]);
+      Promise.allSettled(ids.slice(0, 12).map((id) => api.video(id)))
+        .then((rs) => done(rs.filter((r) => r.status === "fulfilled").map((r) => {
+          const v = (r as PromiseFulfilledResult<Detail>).value;
+          return { id: v.id, cover: v.cover, title: v.title };
+        })))
+        .catch(() => done([]));
+    };
+    if (!user) { loadLocal(); return () => { alive = false; }; }
+    /* 登录后以服务端列表为准：本机本地记录换机/清缓存就没了 */
+    (tab === "fav" ? api.collects(1) : api.myHistory(1))
+      .then((r) => {
         if (!alive) return;
-        setCards(rs.filter((r) => r.status === "fulfilled").map((r) => (r as PromiseFulfilledResult<Detail>).value));
+        done((r.items || []).map(toCard));
+        setHasMore(!!r.pagination && r.pagination.page < r.pagination.pages);
       })
-      .finally(() => { if (alive) setLoading(false); });
+      .catch(loadLocal);
     return () => { alive = false; };
-  }, [ids.join(",")]);
+  }, [tab, ids.join(","), user?.id]);
+
+  const loadMore = async () => {
+    const next = page + 1;
+    setMoreBusy(true);
+    try {
+      const r = await (tab === "fav" ? api.collects(next) : api.myHistory(next));
+      setCards((prev) => [...prev, ...(r.items || []).map(toCard)]);
+      setPage(next);
+      setHasMore(!!r.pagination && r.pagination.page < r.pagination.pages);
+    } catch {
+      /* 翻页失败保留当前列表 */
+    } finally {
+      setMoreBusy(false);
+    }
+  };
 
   const submit = async () => {
     if (!username.trim() || !password) { setErr("请输入账号与密码"); return; }
@@ -106,6 +208,10 @@ export default function Profile({ wide }: { wide: boolean }) {
               <li>· 发表评论与回复</li>
             </ul>
           </div>
+
+          <div className="mt-3 rounded-(--r-md) bg-s2">
+            <ProxySection />
+          </div>
         </div>
       </div>
     );
@@ -167,8 +273,14 @@ export default function Profile({ wide }: { wide: boolean }) {
               sub={tab === "fav" ? "在剧集页点收藏，之后就能在这里找到" : "看过的剧集会出现在这里"}
               action="去逛逛" onAction={() => push({ kind: "ranks" })} />
           )}
-          {cards.length > 0 && tab === "history" && (
+          {cards.length > 0 && tab === "history" && !user && (
             <button onClick={clearHistory} className="mt-3 w-full h-9 rounded-(--r-ctl) bg-s3 text-[12px] text-mut pressable">清空观看历史</button>
+          )}
+          {user && hasMore && (
+            <button onClick={loadMore} disabled={moreBusy}
+              className="mt-3 w-full h-9 rounded-(--r-ctl) bg-s3 text-[12px] text-on/80 pressable disabled:opacity-60">
+              {moreBusy ? "加载中…" : "加载更多"}
+            </button>
           )}
         </div>
 
@@ -186,9 +298,10 @@ export default function Profile({ wide }: { wide: boolean }) {
             <span className="w-8 h-8 rounded-full bg-s3 flex items-center justify-center text-primary"><IHeart size={16} /></span>
             <div className="flex-1">
               <div className="text-[12.5px] text-on">本地喜欢</div>
-              <div className="text-[10.5px] text-mut">{favs.length} 部收藏 · {history.length} 条观看记录</div>
+              <div className="text-[10.5px] text-mut">{user ? "已与账号同步" : `${favs.length} 部收藏 · ${history.length} 条观看记录`}</div>
             </div>
           </div>
+          <ProxySection />
         </div>
 
         {/* 关于 / 缓存 */}

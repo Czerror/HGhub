@@ -190,8 +190,50 @@ pub async fn api_video(state: State<'_, Api>, id: i64) -> Result<Value, String> 
 
 #[tauri::command]
 pub async fn api_play(state: State<'_, Api>, id: i64, ep: u32) -> Result<Value, String> {
+    // 站点改用 POST .../episodes/{ep}/playback 下发签名片源，GET /play 只剩元数据
+    let token = state.session.token();
+    let data = edge(
+        "POST",
+        &format!("/api/videos/{id}/episodes/{ep}/playback"),
+        Some(json!({})),
+        token.as_deref(),
+    )
+    .await?;
+    let url = data.pointer("/streams/main").and_then(|v| v.as_str()).unwrap_or("");
+    if url.is_empty() {
+        return Err("暂无播放地址".to_string());
+    }
+    // 观看历史由站点单独记：video_id + ep，失败不影响播放
+    if let Some(t) = token.as_deref() {
+        let _ = edge(
+            "POST",
+            "/api/users/me/history",
+            Some(json!({ "video_id": id, "ep": ep })),
+            Some(t),
+        )
+        .await;
+    }
+    Ok(json!({
+        "id": id,
+        "ep_num": ep,
+        "video_url": url,
+        "video_url_hevc": data.pointer("/streams/hevc").and_then(|v| v.as_str()).unwrap_or(""),
+    }))
+}
+
+/// 我的收藏：服务端列表（本机本地记录可能为空或换机丢失）。
+#[tauri::command]
+pub async fn api_my_collects(state: State<'_, Api>, page: u32, size: u32) -> Result<Value, String> {
     state
-        .get(&format!("/api/videos/{id}/play?ep={ep}&page_texts=0"))
+        .authed("GET", &format!("/api/users/me/collects?page={page}&size={size}"), None)
+        .await
+}
+
+/// 观看历史：服务端列表。
+#[tauri::command]
+pub async fn api_my_history(state: State<'_, Api>, page: u32, size: u32) -> Result<Value, String> {
+    state
+        .authed("GET", &format!("/api/users/me/history?page={page}&size={size}"), None)
         .await
 }
 
@@ -304,4 +346,16 @@ pub async fn api_post_comments(
     state
         .get(&format!("/api/posts/{id}/comments?page={page}&size={size}"))
         .await
+}
+
+/// 应用内代理：返回当前值（空串表示直连）。
+#[tauri::command]
+pub fn api_get_proxy() -> String {
+    crate::net::proxy()
+}
+
+/// 应用内代理：设置并立即生效，空串表示直连。
+#[tauri::command]
+pub fn api_set_proxy(proxy: String) -> Result<(), String> {
+    crate::net::set_proxy(&proxy)
 }

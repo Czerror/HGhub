@@ -1,4 +1,5 @@
 mod api;
+mod edge;
 mod media;
 mod net;
 mod session;
@@ -14,6 +15,7 @@ pub fn run() {
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 let state: tauri::State<Api> = app.state();
+                net::bind(&dir);
                 state.session.bind(dir);
             }
             Ok(())
@@ -38,6 +40,8 @@ pub fn run() {
             api::api_logout,
             api::api_me,
             api::api_feed,
+            api::api_get_proxy,
+            api::api_set_proxy,
             api::api_category,
             api::api_rank,
             api::api_search,
@@ -49,6 +53,8 @@ pub fn run() {
             api::api_post_comments,
             api::api_video,
             api::api_play,
+            api::api_my_collects,
+            api::api_my_history,
             api::api_comments,
             api::api_comment_send,
             api::api_like,

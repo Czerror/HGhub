@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  CommentPage, Detail, Paged, PlayInfo, Post, RankItem, User, VideoCard,
+  CommentPage, Detail, Paged, PlayInfo, PlaylistItem, Post, RankItem, User, VideoCard,
 } from "./types";
+
+type ListPage = { items: PlaylistItem[]; pagination: { page: number; pages: number; total: number } };
 
 /* ── 运行环境 ───────────────────────────────────────────── */
 
@@ -33,6 +35,8 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 
 export const api = {
   boot: () => call<{ user: User | null; logged_in: boolean; base: string }>("app_boot"),
+  proxy: () => call<string>("api_get_proxy"),
+  setProxy: (proxy: string) => call<void>("api_set_proxy", { proxy }),
   login: (username: string, password: string) =>
     call<{ user: User }>("api_login", { username, password }),
   register: (username: string, password: string, email = "") =>
@@ -54,6 +58,8 @@ export const api = {
 
   video: (id: number) => call<Detail>("api_video", { id }),
   play: (id: number, ep: number) => call<PlayInfo>("api_play", { id, ep }),
+  collects: (page = 1) => call<ListPage>("api_my_collects", { page, size: 20 }),
+  myHistory: (page = 1) => call<ListPage>("api_my_history", { page, size: 20 }),
 
   comments: (id: number, ep: number, page = 1, size = 20) =>
     call<CommentPage>("api_comments", { id, ep, page, size }),

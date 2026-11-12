@@ -1,5 +1,16 @@
 export type Author = { id: number; name: string; avatar?: string; followers?: number };
 
+/** 我的收藏 / 观看历史列表项（服务端 /api/users/me/*） */
+export type PlaylistItem = {
+  id: number;
+  video_id?: number;
+  title: string;
+  cover: string;
+  last_ep?: number;
+  total_ep?: number;
+  updated_at?: string;
+};
+
 export type VideoCard = {
   id: number;
   title: string;
