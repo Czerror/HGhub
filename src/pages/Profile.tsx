@@ -185,7 +185,7 @@ export default function Profile({ wide }: { wide: boolean }) {
             <div className="mt-3.5 flex flex-col gap-2.5">
               <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="账号（4-20 位字母/数字/下划线）"
                 className="h-10 px-3.5 rounded-(--r-sm) bg-s3 text-[13px] text-on placeholder-dim outline-none focus:bg-s4" />
-              <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="密码（6-20 位）"
+              <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder={mode === "register" ? "密码（6-20 位，需含字母和数字）" : "密码（6-20 位）"}
                 onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
                 className="h-10 px-3.5 rounded-(--r-sm) bg-s3 text-[13px] text-on placeholder-dim outline-none focus:bg-s4" />
               {mode === "register" && (
